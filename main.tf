@@ -44,7 +44,7 @@ module "batch_queue" {
 
 locals {
   version           = file("${path.module}/version")
-  docker_image_path = var.app_name == "swipe-test" ? "swipe" : "ghcr.io/chanzuckerberg/swipe"
+  docker_image_path = var.app_name == "swipe-test" ? "swipe" : "491013321714.dkr.ecr.us-west-2.amazonaws.com/swipe"
 }
 
 module "sfn" {
