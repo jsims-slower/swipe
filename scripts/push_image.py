@@ -4,27 +4,27 @@ import argparse
 import subprocess
 import warnings
 
-import os
-import sys
-import json
-import logging
-import datetime
-
 
 def docker_login(profile: str):
     account = run_cmd(
-        ["aws", "sts", "get-caller-identity", "--profile", profile, "--query", "Account", "--output", "text"])
+        ["aws", "sts", "get-caller-identity", "--profile", profile, "--query", "Account", "--output", "text"]
+    )
     if not account:
         raise Exception("AWS Profile Has no Account")
     print(f"account = {account}")
 
-    password = run_cmd(["aws", "ecr", "get-login-password", "--region", "us-west-2", "--profile", profile])
+    password = run_cmd(
+        ["aws", "ecr", "get-login-password", "--region", "us-west-2", "--profile", profile]
+    )
     print(f"password = {password}")
 
     docker_url = f"{account}.dkr.ecr.us-west-2.amazonaws.com"
     print(f"docker_url = {docker_url}")
 
-    res = run_cmd(["docker", "login", "--username", "AWS", "--password-stdin", docker_url], password)
+    res = run_cmd(
+        ["docker", "login", "--username", "AWS", "--password-stdin", docker_url],
+        password
+    )
     print(f"Docker Login: {res}")
 
     return docker_url
@@ -62,9 +62,7 @@ def main():
     # --platform linux/amd64,linux/arm64
     cmd = ["docker", "buildx", "build", "--platform", "linux/amd64", ".", "--tag", f"{docker_url}/{module}:latest"]
     cmd += ["--push"]
-    print(' '.join(cmd))
-
-    # run_cmd(cmd)
+    run_cmd(cmd)
 
 
 if __name__ == "__main__":
