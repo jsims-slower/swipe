@@ -42,9 +42,11 @@ module "batch_queue" {
   user_data_parts          = var.user_data_parts
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   version           = file("${path.module}/version")
-  docker_image_path = var.app_name == "swipe-test" ? "swipe" : "491013321714.dkr.ecr.us-west-2.amazonaws.com/swipe"
+  docker_image_path = var.app_name == "swipe-test" ? "swipe" : "${data.aws_caller_identity.current.account_id}.dkr.ecr.us-west-2.amazonaws.com/swipe"
 }
 
 module "sfn" {
