@@ -4,6 +4,10 @@ import argparse
 import subprocess
 import warnings
 
+image_tags = [
+    "latest",
+    "v1.4.9",
+]
 
 def docker_login(profile: str):
     account = run_cmd(
@@ -60,7 +64,9 @@ def main():
     # version="latest"
 
     # --platform linux/amd64,linux/arm64
-    cmd = ["docker", "buildx", "build", "--platform", "linux/amd64", ".", "--tag", f"{docker_url}/{module}:latest"]
+    cmd = ["docker", "buildx", "build", "--platform", "linux/amd64", "."]
+    for image_tag in image_tags:
+        cmd += ["--tag", f"{docker_url}/{module}:{image_tag}"]
     cmd += ["--push"]
     run_cmd(cmd)
 
