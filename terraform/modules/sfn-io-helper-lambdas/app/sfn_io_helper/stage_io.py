@@ -9,7 +9,7 @@ from uuid import uuid4
 from botocore import xform_name
 from botocore.exceptions import ClientError  # type: ignore
 
-from . import s3_object, sqs
+from . import s3, s3_object, sqs
 
 logger = logging.getLogger()
 
@@ -22,12 +22,17 @@ def get_output_uri_key(stage):
     return f"{xform_name(stage).upper()}_OUTPUT_URI"
 
 
-def get_output_path(sfn_state) -> str:
-    assert sfn_state["OutputPrefix"].startswith("s3://")
-    return os.path.join(
-        sfn_state["OutputPrefix"],
-        re.sub(r"v(\d+)\..+", r"\1", get_workflow_name(sfn_state)),
-    )
+def get_output_path(sfn_state):
+    """
+    The output path is ``<OutputPrefix>/<workflow_name>`` with the ``vX.Y.Z`` suffix normalized to just ``X``
+
+    Example:
+        ``OutputPrefix=s3://idseq-samples/samples/1/19/11, workflow_name=short-read-mngs-v8.3.15`` -> ``s3://idseq-samples/samples/1/19/11/short-read-mngs-8``
+    """
+    output_prefix = sfn_state["OutputPrefix"]
+    assert output_prefix.startswith("s3://")
+    sub_path = re.sub(r"v(\d+)\..+", r"\1", get_workflow_name(sfn_state))
+    return f"{output_prefix.rstrip('/')}/{sub_path}"
 
 
 def get_stage_input(sfn_state, stage):
@@ -89,10 +94,16 @@ def segment_path(path: str) -> List[str]:
 
 
 def get_workflow_name(sfn_state):
+    """
+    The workflow name is extracted from any ``*_WDL_URI`` entry in the SFN state.
+
+    Example:
+        ``HOST_FILTER_WDL_URI=s3://seqtoid-workflows-staging-030998640247/short-read-mngs-v8.3.15/host_filter.wdl`` -> ``short-read-mngs-v8.3.15``
+    """
     for k, v in sfn_state.items():
         if k.endswith("_WDL_URI"):
             segments = [s for s in segment_path(v) if re.match(r".*-v(\d+)", s)]
-            name = segments[0] if segments else str(os.path.basename(v))
+            name = segments[0] if segments else os.path.basename(str(v))
             return os.path.splitext(name)[0]
     raise ValueError("Could not find workflow name")
 
@@ -211,26 +222,15 @@ restricted_intermediate_files = {
 
 def delete_restricted_intermediate_files(sfn_state):
     """
-    Delete files listed in ``restricted_intermediate_files`` from the workflow's
-    S3 output directory.
+    Delete all files listed in ``restricted_intermediate_files`` from the workflow's S3 output directory.
 
-    The output directory is derived the same way ``preprocess_sfn_input`` derives
-    per-stage input/output URIs: it is ``<OutputPrefix>/<workflow-name>``, where
-    the workflow name is extracted from a ``*_WDL_URI`` entry in the SFN state
-    and its ``vX.Y.Z`` suffix is normalized to just ``X`` (e.g.
-    ``short-read-mngs-v8.3.15`` -> ``short-read-mngs-8``). This yields the exact
-    same S3 URI that miniwdl uses as its progressive-upload prefix and that the
-    per-stage ``s3_wd_uri`` fields point at.
-
-    Errors deleting individual objects are logged but never raised, so that a
-    missing file (or a transient permissions issue) does not mask the original
-    success/failure signal that triggered this cleanup.
+    Deletion errors are logged but never raised, so that a missing file does not stop this cleanup or impact the caller.
     """
 
     output_path = get_output_path(sfn_state)
-    logger.info("Deleted restricted intermediate files in %s", output_path)
+    logger.info("Deleting restricted intermediate files in %s", output_path)
     for filename in restricted_intermediate_files:
-        file_uri = f"{output_path.rstrip('/')}/{filename}"
+        file_uri = f"{output_path}/{filename}"
         try:
             s3_object(file_uri).delete()
             logger.info("Deleted restricted intermediate file %s", file_uri)
@@ -244,3 +244,31 @@ def delete_restricted_intermediate_files(sfn_state):
                 logger.warning("Failed to delete restricted intermediate file %s: %s", file_uri, e)
         except Exception as e:  # defensive: never let cleanup mask the real outcome
             logger.warning("Unexpected error deleting restricted intermediate file %s: %s", file_uri, e)
+
+
+def delete_sample_files(sfn_state):
+    """
+    Delete all files listed in the workflow's S3 sample directory.
+
+    Deletion errors are logged but never raised so that a missing file does not impact the caller.
+    """
+
+    output_prefix = sfn_state["OutputPrefix"]
+    assert output_prefix.startswith("s3://")
+
+    # Remove the last part of the path and replace it with "fastqs/", including a terminating backslash
+    # IE: s3://idseq-samples/samples/1/19/11 -> bucket=idseq-samples samples_path=samples/1/19/fastqs/
+    path_as_array = output_prefix.rstrip("/").split("/")[2:]
+    bucket_name = path_as_array[0]
+    samples_path = "/".join([
+        *path_as_array[1:-1],
+        "fastqs",
+        ""
+    ])
+    logger.info("Deleting sample files in bucket=%s path=%s", bucket_name, samples_path)
+
+    try:
+        responses = s3.Bucket(bucket_name).objects.filter(Prefix=samples_path).delete()
+        logger.info("Deleted sample files: %s", json.dumps(responses))
+    except Exception as e:
+        logger.warning("Unexpected error deleting sample files in %s: %s", samples_path, e)
