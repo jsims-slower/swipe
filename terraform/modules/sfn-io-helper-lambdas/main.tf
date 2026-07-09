@@ -52,6 +52,8 @@ resource "aws_iam_role_policy" "iam_role_policy" {
       {
         Effect : "Allow",
         Action : [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
           "s3:List*",
           "s3:GetObject*",
           "s3:PutObject*"

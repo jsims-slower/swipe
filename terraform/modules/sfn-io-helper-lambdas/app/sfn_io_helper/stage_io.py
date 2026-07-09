@@ -22,6 +22,14 @@ def get_output_uri_key(stage):
     return f"{xform_name(stage).upper()}_OUTPUT_URI"
 
 
+def get_output_path(sfn_state) -> str:
+    assert sfn_state["OutputPrefix"].startswith("s3://")
+    return os.path.join(
+        sfn_state["OutputPrefix"],
+        re.sub(r"v(\d+)\..+", r"\1", get_workflow_name(sfn_state)),
+    )
+
+
 def get_stage_input(sfn_state, stage):
     input_uri = sfn_state[get_input_uri_key(stage)]
     return json.loads(s3_object(input_uri).get()["Body"].read().decode().strip() or '{}')
@@ -84,8 +92,9 @@ def get_workflow_name(sfn_state):
     for k, v in sfn_state.items():
         if k.endswith("_WDL_URI"):
             segments = [s for s in segment_path(v) if re.match(r".*-v(\d+)", s)]
-            name = segments[0] if segments else os.path.basename(v)
+            name = segments[0] if segments else str(os.path.basename(v))
             return os.path.splitext(name)[0]
+    raise ValueError("Could not find workflow name")
 
 
 def link_outputs(sfn_state):
@@ -111,9 +120,7 @@ def link_outputs(sfn_state):
 
 def preprocess_sfn_input(sfn_state, aws_region, aws_account_id, state_machine_name):
     # TODO: add input validation assertions here (use JSON schema?)
-    assert sfn_state["OutputPrefix"].startswith("s3://")
-    output_prefix = sfn_state["OutputPrefix"]
-    output_path = os.path.join(output_prefix, re.sub(r"v(\d+)\..+", r"\1", get_workflow_name(sfn_state)))
+    output_path = get_output_path(sfn_state)
 
     for stage in sfn_state["Input"].keys():
         sfn_state[get_input_uri_key(stage)] = os.path.join(output_path, f"{xform_name(stage)}_input.json")
@@ -163,10 +170,10 @@ def broadcast_stage_complete(execution_id: str, stage: str):
             #   field in the lambda, but it is part of the schema for these
             #   messages so we may need to add it.
             # "startDate": 1551225271984,
-            "stopDate":  None,
+            "stopDate": None,
             "input": "{}",
             "inputDetails": {
-                 "included": None
+                "included": None
             },
             "output": None,
             "outputDetails": None
@@ -178,3 +185,62 @@ def broadcast_stage_complete(execution_id: str, stage: str):
             QueueUrl=squs_que_url,
             MessageBody=body,
         )
+
+
+restricted_intermediate_files = {
+    "valid_input1.fastq",
+    "valid_input2.fastq",
+    "bowtie2_ercc_filtered1.fastq",
+    "bowtie2_ercc_filtered2.fastq",
+    "fastp1.fastq",
+    "fastp2.fastq",
+    "bowtie2_host_filtered1.fastq",
+    "bowtie2_host_filtered2.fastq",
+    "bowtie2_host.bam",
+    "hisat2_host_filtered1.fastq",
+    "hisat2_host_filtered2.fastq",
+    "bowtie2_human_filtered1.fastq",
+    "bowtie2_human_filtered2.fastq",
+    "sample_validated.fastq",
+    "sample_quality_filtered.fastq",
+    "sample.hostfiltered.fastq",
+    "sample.hostfiltered.bam",
+    "sample.humanfiltered.bam",
+}
+
+
+def delete_restricted_intermediate_files(sfn_state):
+    """
+    Delete files listed in ``restricted_intermediate_files`` from the workflow's
+    S3 output directory.
+
+    The output directory is derived the same way ``preprocess_sfn_input`` derives
+    per-stage input/output URIs: it is ``<OutputPrefix>/<workflow-name>``, where
+    the workflow name is extracted from a ``*_WDL_URI`` entry in the SFN state
+    and its ``vX.Y.Z`` suffix is normalized to just ``X`` (e.g.
+    ``short-read-mngs-v8.3.15`` -> ``short-read-mngs-8``). This yields the exact
+    same S3 URI that miniwdl uses as its progressive-upload prefix and that the
+    per-stage ``s3_wd_uri`` fields point at.
+
+    Errors deleting individual objects are logged but never raised, so that a
+    missing file (or a transient permissions issue) does not mask the original
+    success/failure signal that triggered this cleanup.
+    """
+
+    output_path = get_output_path(sfn_state)
+    logger.info("Deleted restricted intermediate files in %s", output_path)
+    for filename in restricted_intermediate_files:
+        file_uri = f"{output_path.rstrip('/')}/{filename}"
+        try:
+            s3_object(file_uri).delete()
+            logger.info("Deleted restricted intermediate file %s", file_uri)
+        except ClientError as e:
+            # NoSuchKey means the file was never produced (e.g. single-end
+            # runs won't have valid_input2.fastq); treat that as a no-op.
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code == "NoSuchKey":
+                logger.debug("Restricted intermediate file %s already absent (NoSuchKey)", file_uri)
+            else:
+                logger.warning("Failed to delete restricted intermediate file %s: %s", file_uri, e)
+        except Exception as e:  # defensive: never let cleanup mask the real outcome
+            logger.warning("Unexpected error deleting restricted intermediate file %s: %s", file_uri, e)
