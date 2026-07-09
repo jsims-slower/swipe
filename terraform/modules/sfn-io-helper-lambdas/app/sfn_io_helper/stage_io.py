@@ -198,28 +198,6 @@ def broadcast_stage_complete(execution_id: str, stage: str):
         )
 
 
-restricted_intermediate_files = {
-    "valid_input1.fastq",
-    "valid_input2.fastq",
-    "bowtie2_ercc_filtered1.fastq",
-    "bowtie2_ercc_filtered2.fastq",
-    "fastp1.fastq",
-    "fastp2.fastq",
-    "bowtie2_host_filtered1.fastq",
-    "bowtie2_host_filtered2.fastq",
-    "bowtie2_host.bam",
-    "hisat2_host_filtered1.fastq",
-    "hisat2_host_filtered2.fastq",
-    "bowtie2_human_filtered1.fastq",
-    "bowtie2_human_filtered2.fastq",
-    "sample_validated.fastq",
-    "sample_quality_filtered.fastq",
-    "sample.hostfiltered.fastq",
-    "sample.hostfiltered.bam",
-    "sample.humanfiltered.bam",
-}
-
-
 def delete_restricted_intermediate_files(sfn_state):
     """
     Delete all files listed in ``restricted_intermediate_files`` from the workflow's S3 output directory.
@@ -227,23 +205,51 @@ def delete_restricted_intermediate_files(sfn_state):
     Deletion errors are logged but never raised, so that a missing file does not stop this cleanup or impact the caller.
     """
 
+    restricted_regexes = {
+        re.compile(r".*bowtie2_ercc_filtered\d+\.fastq$"),
+        re.compile(r".*bowtie2_host\.bam$"),
+        re.compile(r".*bowtie2_host_filtered\d+\.fastq$"),
+        re.compile(r".*bowtie2_human_filtered\d+\.fastq$"),
+        re.compile(r".*fastp\d+\.fastq$"),
+        re.compile(r".*hisat2_host_filtered\d+\.fastq$"),
+        re.compile(r".*sample_validated\.fastq$"),
+        re.compile(r".*sample_quality_filtered\.fastq$"),
+        re.compile(r".*sample\.hostfiltered\.fastq$"),
+        re.compile(r".*sample\.hostfiltered\.bam$"),
+        re.compile(r".*sample\.humanfiltered\.bam$"),
+        re.compile(r".*valid_input\d+\.fastq$"),
+        re.compile(r".*validated_\d+\.fastq\.gz$"),
+    }
+
     output_path = get_output_path(sfn_state)
-    logger.info("Deleting restricted intermediate files in %s", output_path)
-    for filename in restricted_intermediate_files:
-        file_uri = f"{output_path}/{filename}"
-        try:
-            s3_object(file_uri).delete()
-            logger.info("Deleted restricted intermediate file %s", file_uri)
-        except ClientError as e:
-            # NoSuchKey means the file was never produced (e.g. single-end
-            # runs won't have valid_input2.fastq); treat that as a no-op.
-            error_code = e.response.get("Error", {}).get("Code")
-            if error_code == "NoSuchKey":
-                logger.debug("Restricted intermediate file %s already absent (NoSuchKey)", file_uri)
-            else:
-                logger.warning("Failed to delete restricted intermediate file %s: %s", file_uri, e)
-        except Exception as e:  # defensive: never let cleanup mask the real outcome
-            logger.warning("Unexpected error deleting restricted intermediate file %s: %s", file_uri, e)
+    bucket_name, prefix = output_path.split("/", 3)[2:]
+    prefix = f"{prefix}/"
+    logger.info(
+        "Deleting restricted intermediate files in %s (bucket=%s prefix=%s",
+        output_path,
+        bucket_name,
+        prefix
+    )
+
+    # We use the legacy paginator because it allows for retrieving only the files in a given directory, instead of recursing to all files
+    paginator = s3.meta.client.get_paginator("list_objects_v2")
+    objects_to_delete = []
+    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, Delimiter="/"):
+        if 'Contents' in page:
+            for page_contents in page['Contents']:
+                s3_key = page_contents['Key']
+                if s3_key != prefix:
+                    logger.debug("Trying to match S3 object s3://%s/%s", bucket_name, s3_key)
+                    for restricted_regex in restricted_regexes:
+                        if restricted_regex.fullmatch(s3_key):
+                            objects_to_delete.append({"Key": s3_key})
+                            break
+
+    logger.info("Deleting intermediate files: %s", json.dumps(objects_to_delete))
+    try:
+        s3.Bucket(bucket_name).delete_objects(Delete={"Objects": objects_to_delete})
+    except Exception as e:
+        logger.warning("Error deleting intermediate files: %s", e)
 
 
 def delete_sample_files(sfn_state):
