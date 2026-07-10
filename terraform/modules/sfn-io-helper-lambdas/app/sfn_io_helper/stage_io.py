@@ -217,6 +217,7 @@ def delete_restricted_intermediate_files(sfn_state):
         re.compile(r".*sample\.hostfiltered\.fastq$"),
         re.compile(r".*sample\.hostfiltered\.bam$"),
         re.compile(r".*sample\.humanfiltered\.bam$"),
+        re.compile(r".*sample\.humanfiltered\.fastq$"),
         re.compile(r".*valid_input\d+\.fastq$"),
         re.compile(r".*validated_\d+\.fastq\.gz$"),
     }

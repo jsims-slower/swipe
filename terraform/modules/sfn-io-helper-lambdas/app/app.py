@@ -73,7 +73,6 @@ def handle_success(sfn_data, _):
 
 def handle_failure(sfn_data, context):
     logger.info(f"handle_failure.sfn_data: {json.dumps(sfn_data)}")
-    logger.info(f"handle_failure.context: {json.dumps(context)}")
     # This Lambda MUST raise an exception with the details of the error that caused the failure.
     sfn_state = sfn_data["Input"]
     assert sfn_data["CurrentState"] == "HandleFailure"
