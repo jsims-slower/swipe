@@ -225,7 +225,7 @@ def delete_restricted_intermediate_files(sfn_state):
     bucket_name, prefix = output_path.split("/", 3)[2:]
     prefix = f"{prefix}/"
     logger.info(
-        "Deleting restricted intermediate files in %s (bucket=%s prefix=%s",
+        "Deleting restricted intermediate files in %s (bucket=%s prefix=%s)",
         output_path,
         bucket_name,
         prefix
@@ -245,11 +245,11 @@ def delete_restricted_intermediate_files(sfn_state):
                             objects_to_delete.append({"Key": s3_key})
                             break
 
-    logger.info("Deleting intermediate files: %s", json.dumps(objects_to_delete))
+    logger.info("Deleting restricted intermediate files: %s", json.dumps(objects_to_delete))
     try:
         s3.Bucket(bucket_name).delete_objects(Delete={"Objects": objects_to_delete})
     except Exception as e:
-        logger.warning("Error deleting intermediate files: %s", e)
+        logger.warning("Error deleting restricted intermediate files: %s", e)
 
 
 def delete_sample_files(sfn_state):
