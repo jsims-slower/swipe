@@ -87,6 +87,7 @@ States:
     Next: TwoSPOT
     Catch:
       - ErrorEquals: ["States.ALL"]
+        ResultPath: $.Failure
         Next: HandleFailure
   TwoSPOT:
     Type: Task
@@ -162,6 +163,7 @@ States:
     Next: HandleSuccess
     Catch:
       - ErrorEquals: ["States.ALL"]
+        ResultPath: $.Failure
         Next: HandleFailure
   HandleSuccess:
     Type: Task

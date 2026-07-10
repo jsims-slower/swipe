@@ -32,10 +32,13 @@ import os
 import json
 import logging
 
+logging.basicConfig(
+    level=os.environ.get('LOG_LEVEL', 'INFO').upper()
+)
+
 from sfn_io_helper import batch_events, reporting, stage_io
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
 
 
 def preprocess_input(sfn_data, _):

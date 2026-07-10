@@ -225,13 +225,13 @@ def delete_restricted_intermediate_files(sfn_state):
     output_path = get_output_path(sfn_state)
     bucket_name, prefix = output_path.split("/", 3)[2:]
     prefix = f"{prefix}/"
+
     logger.info(
-        "Deleting restricted intermediate files in %s (bucket=%s prefix=%s)",
+        "Scanning for restricted intermediate files in %s (bucket=%s prefix=%s)",
         output_path,
         bucket_name,
         prefix
     )
-
     # We use the legacy paginator because it allows for retrieving only the files in a given directory, instead of recursing to all files
     paginator = s3.meta.client.get_paginator("list_objects_v2")
     objects_to_delete = []
@@ -246,11 +246,14 @@ def delete_restricted_intermediate_files(sfn_state):
                             objects_to_delete.append({"Key": s3_key})
                             break
 
-    logger.info("Deleting restricted intermediate files: %s", json.dumps(objects_to_delete))
-    try:
-        s3.Bucket(bucket_name).delete_objects(Delete={"Objects": objects_to_delete})
-    except Exception as e:
-        logger.warning("Error deleting restricted intermediate files: %s", e)
+    if objects_to_delete:
+        logger.info("Deleting restricted intermediate files: %s", json.dumps(objects_to_delete))
+        try:
+            s3.Bucket(bucket_name).delete_objects(Delete={"Objects": objects_to_delete})
+        except Exception as e:
+            logger.warning("Error deleting restricted intermediate files: %s", e)
+    else:
+        logger.info("No restricted intermediate files to delete")
 
 
 def delete_sample_files(sfn_state):
@@ -264,18 +267,19 @@ def delete_sample_files(sfn_state):
     assert output_prefix.startswith("s3://")
 
     # Remove the last part of the path and replace it with "fastqs/", including a terminating backslash
-    # IE: s3://idseq-samples/samples/1/19/11 -> bucket=idseq-samples samples_path=samples/1/19/fastqs/
+    # IE: s3://idseq-samples/samples/1/19/11 -> bucket=idseq-samples prefix=samples/1/19/fastqs/
     path_as_array = output_prefix.rstrip("/").split("/")[2:]
     bucket_name = path_as_array[0]
-    samples_path = "/".join([
+    prefix = "/".join([
         *path_as_array[1:-1],
         "fastqs",
         ""
     ])
-    logger.info("Deleting sample files in bucket=%s path=%s", bucket_name, samples_path)
+    s3_uri = f"s3://{bucket_name}/{prefix}"
 
+    logger.info("Deleting all files in %s (bucket=%s prefix=%s)", s3_uri, bucket_name, prefix)
     try:
-        responses = s3.Bucket(bucket_name).objects.filter(Prefix=samples_path).delete()
+        responses = s3.Bucket(bucket_name).objects.filter(Prefix=prefix).delete()
         logger.info("Deleted sample files: %s", json.dumps(responses))
     except Exception as e:
-        logger.warning("Unexpected error deleting sample files in %s: %s", samples_path, e)
+        logger.warning("Unexpected error deleting sample files in %s: %s", s3_uri, e)
