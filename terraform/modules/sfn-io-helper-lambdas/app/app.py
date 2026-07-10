@@ -34,7 +34,8 @@ import logging
 
 from sfn_io_helper import batch_events, reporting, stage_io
 
-logging.getLogger().setLevel(logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 
 
 def preprocess_input(sfn_data, _):
@@ -61,6 +62,8 @@ def process_stage_output(sfn_data, _):
 
 
 def handle_success(sfn_data, _):
+    logger.info(f"handle_success.sfn_data: {json.dumps(sfn_data)}")
+    logger.info(f"handle_success.context: {json.dumps(context)}")
     sfn_state = sfn_data["Input"]
     reporting.notify_success(sfn_state=sfn_state)
     stage_io.delete_restricted_intermediate_files(sfn_state)
@@ -68,7 +71,9 @@ def handle_success(sfn_data, _):
     return sfn_state
 
 
-def handle_failure(sfn_data, _):
+def handle_failure(sfn_data, context):
+    logger.info(f"handle_failure.sfn_data: {json.dumps(sfn_data)}")
+    logger.info(f"handle_failure.context: {json.dumps(context)}")
     # This Lambda MUST raise an exception with the details of the error that caused the failure.
     sfn_state = sfn_data["Input"]
     assert sfn_data["CurrentState"] == "HandleFailure"
@@ -77,11 +82,12 @@ def handle_failure(sfn_data, _):
     # so cleanup runs regardless of the terminal state of the execution.
     stage_io.delete_restricted_intermediate_files(sfn_state)
     stage_io.delete_sample_files(sfn_state)
-    failure_type = type(sfn_state["Error"], (Exception,), dict())
+    failure = sfn_state.get("Failure", sfn_state)
+    failure_type = type(failure["Error"], (Exception,), dict())
     try:
-        cause = json.loads(sfn_state["Cause"])["errorMessage"]
+        cause = json.loads(failure["Cause"])["errorMessage"]
     except Exception:
-        cause = sfn_state["Cause"]
+        cause = failure["Cause"]
     raise failure_type(cause)
 
 
