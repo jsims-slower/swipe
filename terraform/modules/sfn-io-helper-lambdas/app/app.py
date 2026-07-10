@@ -63,7 +63,6 @@ def process_stage_output(sfn_data, _):
 
 def handle_success(sfn_data, _):
     logger.info(f"handle_success.sfn_data: {json.dumps(sfn_data)}")
-    logger.info(f"handle_success.context: {json.dumps(context)}")
     sfn_state = sfn_data["Input"]
     reporting.notify_success(sfn_state=sfn_state)
     stage_io.delete_restricted_intermediate_files(sfn_state)
